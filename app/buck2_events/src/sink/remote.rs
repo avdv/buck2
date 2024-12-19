@@ -1004,7 +1004,10 @@ fn new_remote_event_sink_if_fbcode(
             retry_attempts,
             message_batch_size,
         );
-        Ok(Some(RemoteEventSink::new()?))
+        match std::env::var("BES_URI") {
+          Ok(_) => Ok(Some(RemoteEventSink::new()?)),
+          _ => Ok(None),
+        }
     }
 }
 
