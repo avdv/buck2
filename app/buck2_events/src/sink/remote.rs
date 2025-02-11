@@ -984,6 +984,7 @@ mod fbcode {
 }
 
 pub use fbcode::*;
+use buck2_error::conversion::from_any_with_tag;
 
 fn new_remote_event_sink_if_fbcode(
     fb: FacebookInit,
@@ -1013,7 +1014,12 @@ fn new_remote_event_sink_if_fbcode(
             message_batch_size,
         );
         match std::env::var("BES_URI") {
-          Ok(_) => Ok(Some(RemoteEventSink::new()?)),
+          Ok(_) => Ok(
+              Some(
+                  RemoteEventSink::new()
+                     .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
+              )
+          ),
           _ => Ok(None),
         }
     }
