@@ -415,14 +415,14 @@ mod fbcode {
         type Err = anyhow::Error;
 
         fn from_str(s: &str) -> Result<Self, Self::Err> {
-            let mut iter = s.split(':');
-            match (iter.next(), iter.next(), iter.next()) {
-                (Some(key), Some(value), None) => Ok(Self {
+            let mut iter = s.splitn(2, ':');
+            match (iter.next(), iter.next()) {
+                (Some(key), Some(value)) => Ok(Self {
                     key: key.trim().to_owned(),
                     value: value.trim().to_owned(),
                 }),
                 _ => Err(anyhow::anyhow!(
-                    "Invalid header (expect exactly one `:`): `{}`",
+                    "Invalid header (expect name and value separated by `:`): `{}`",
                     s
                 )),
             }
