@@ -506,7 +506,9 @@ mod fbcode {
     type GrpcService = InterceptedService<Channel, InjectHeadersInterceptor>;
 
     async fn connect_build_event_server() -> buck2_error::Result<PublishBuildEventClient<GrpcService>> {
-        let uri = std::env::var("BES_URI")?.parse()?;
+        let uri = std::env::var("BES_URI")
+            .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))
+            ?.parse()?;
         let mut channel = Channel::builder(uri);
         let tls_config = ClientTlsConfig::new();
         {
@@ -522,15 +524,18 @@ mod fbcode {
         let endpoint = channel
             .connect()
             .await
-            .context("connecting to Bazel event stream gRPC server")?;
+            .context("connecting to Bazel event stream gRPC server")
+            .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?;
         let mut headers = vec![];
         for hdr in std::env::var("BES_HEADERS").unwrap_or("".to_owned()).split(",") {
             let hdr = hdr.trim();
             if !hdr.is_empty() {
-                headers.push(HttpHeader::from_str(hdr)?);
+                headers.push(HttpHeader::from_str(hdr)
+                             .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?);
             }
         };
-        let interceptor = InjectHeadersInterceptor::new(&headers)?;
+        let interceptor = InjectHeadersInterceptor::new(&headers)
+            .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?;
         let client = PublishBuildEventClient::with_interceptor(endpoint, interceptor);
         Ok(client)
     }
@@ -933,7 +938,7 @@ mod fbcode {
                     }
                 })
                 .context("spawning buck-event-producer thread")
-                .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0));
+                .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?;
             Ok(RemoteEventSink {
                 _handler: handler,
                 send,
@@ -1016,8 +1021,7 @@ fn new_remote_event_sink_if_fbcode(
         match std::env::var("BES_URI") {
           Ok(_) => Ok(
               Some(
-                  RemoteEventSink::new()
-                     .map_err(|e| from_any_with_tag(e, buck2_error::ErrorTag::Tier0))?
+                  RemoteEventSink::new()?
               )
           ),
           _ => Ok(None),
