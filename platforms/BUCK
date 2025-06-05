@@ -1,3 +1,6 @@
 load(":defs.bzl", "platforms")
 
-platforms(name = "platforms")
+_DIGEST = "sha256:590496b24cb89bb5cfadc57757c87f79c752f884a3466968165538ac10b8921e"
+_IMAGE = "docker://ghcr.io/avdv/buck2-build-nix@" + _DIGEST
+
+platforms(name = "platforms", container_image = _IMAGE)
