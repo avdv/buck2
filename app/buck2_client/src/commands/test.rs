@@ -43,6 +43,16 @@ use superconsole::Span;
 
 use crate::commands::build::print_build_result;
 
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum TestOutputMode {
+    /// Only show output from tests that failed
+    Errors,
+    /// Show output from all tests, passing and failing
+    All,
+    /// Show no output, only the summary
+    None,
+}
+
 fn forward_output_to_path(
     output: &str,
     path_arg: &PathArg,
@@ -153,6 +163,13 @@ If include patterns are present, regardless of whether exclude patterns are pres
     #[clap(name = "TEST_EXECUTOR_ARGS", raw = true)]
     test_executor_args: Vec<String>,
 
+    /// Control test output display mode
+    /// 
+    /// Note: The 'errors' mode requires test executors to provide per-test output.
+    /// If not available, no output will be shown to avoid displaying passing test output.
+    #[clap(long = "test-output", value_enum, default_value = "errors")]
+    test_output: TestOutputMode,
+
     /// This option does nothing. It is here to keep compatibility with Buck1 and ci
     #[clap(long = "deep", hide = true)]
     _deep: bool,
@@ -209,6 +226,17 @@ impl StreamingCommand for TestCommand {
                     }),
                     timeout: self.timeout_options.overall_timeout()?,
                     ignore_tests_attribute: self.ignore_tests_attribute,
+                    test_output_mode: match self.test_output {
+                        TestOutputMode::Errors => {
+                            buck2_cli_proto::test_request::TestOutputMode::Errors.into()
+                        }
+                        TestOutputMode::All => {
+                            buck2_cli_proto::test_request::TestOutputMode::All.into()
+                        }
+                        TestOutputMode::None => {
+                            buck2_cli_proto::test_request::TestOutputMode::None.into()
+                        }
+                    },
                 },
                 events_ctx,
                 ctx.console_interaction_stream(&self.common_opts.console_opts),

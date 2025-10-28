@@ -521,6 +521,18 @@ message TestRequest {
 
   // Should you add tests that are on the `tests` attribute of the target.
   bool ignore_tests_attribute = 13;
+
+  enum TestOutputMode {
+    // Show output from all tests (default).
+    ALL = 0;
+    // Only show output from failed tests.
+    ERRORS = 1;
+    // Show no test output, only the summary.
+    NONE = 2;
+  }
+
+  // Controls how much test output is displayed.
+  TestOutputMode test_output_mode = 15;
 }
 
 message BxlRequest {
