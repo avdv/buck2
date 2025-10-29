@@ -7,13 +7,20 @@ rust_protobuf_library(
     name = "buck2_event_publisher_proto",
     srcs = glob(["src/**/*.rs"]),
     build_script = "build.rs",
-    build_env = {
-        "BUCK_HACK_DATA_PROTOC_INCLUDE": "$(location //buck2/app/buck2_data:data_proto)",
-        "BUCK_HACK_HOST_SHARING_PROTOC_INCLUDE": "$(location //buck2/app/buck2_host_sharing_proto:host_sharing_proto",
-    },
-    protos = ["event_publisher.proto"],
+    proto_srcs = ":buck2_event_publisher_proto.proto",
     deps = [
         "fbsource//third-party/rust:tonic",
         "//buck2/app/buck2_data:buck2_data",
+        "//buck2/app/buck2_host_sharing_proto:buck2_host_sharing_proto",
+    ],
+)
+
+proto_srcs(
+    name = "buck2_event_publisher_proto.proto",
+    srcs = ["event_publisher.proto"],
+    visibility = ["PUBLIC"],
+    deps = [
+      translate_target("//buck2/app //buck2/app/buck2_data:data_proto"),
+      translate_target("//buck2/app/buck2_host_sharing_proto:host_sharing_proto"),
     ],
 )
