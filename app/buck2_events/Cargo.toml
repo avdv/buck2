@@ -32,7 +32,7 @@ dupe = { workspace = true }
 fbinit = { workspace = true }
 gazebo = { workspace = true }
 
-bazel_event_publisher_proto = { workspace = true }
+bes_proto = { workspace = true }
 
 buck2_build_info = { workspace = true }
 buck2_cli_proto = { workspace = true }
