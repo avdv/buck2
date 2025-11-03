@@ -1,4 +1,4 @@
- /*
+/*
  * This source code is licensed under both the MIT license found in the
  * LICENSE-MIT file in the root directory of this source tree and the Apache
  * License, Version 2.0 found in the LICENSE-APACHE file in the root directory
@@ -24,56 +24,48 @@ mod fbcode {
     use std::collections::HashMap;
     use std::env::VarError;
     use std::str::FromStr;
+    use std::sync::Arc;
     use std::thread::JoinHandle;
+    use std::time::Duration;
 
     use allocative::Allocative;
     use anyhow::Context;
-
     use async_stream::stream;
-
     use bazel_event_publisher_proto::build_event_stream;
-    use bazel_event_publisher_proto::build_event_stream::build_event_id;
     use bazel_event_publisher_proto::build_event_stream::BuildEventId;
+    use bazel_event_publisher_proto::build_event_stream::build_event_id;
     use bazel_event_publisher_proto::google::devtools::build::v1;
+    use bazel_event_publisher_proto::google::devtools::build::v1::OrderedBuildEvent;
+    use bazel_event_publisher_proto::google::devtools::build::v1::PublishBuildToolEventStreamRequest;
+    use bazel_event_publisher_proto::google::devtools::build::v1::StreamId;
+    use bazel_event_publisher_proto::google::devtools::build::v1::publish_build_event_client::PublishBuildEventClient;
     use buck2_data;
     use buck2_data::BuildCommandStart;
     use buck2_error::ErrorTag;
     use buck2_error::conversion::from_any_with_tag;
     use buck2_util::future::try_join_all;
     use dupe::Dupe;
-    use futures::stream;
-    use once_cell::sync::Lazy;
-
     use futures::Stream;
     use futures::StreamExt;
-    use tonic::metadata;
-    use tonic::metadata::MetadataKey;
-    use tonic::metadata::MetadataValue;
-    use tonic::service::interceptor::InterceptedService;
-    use tonic::service::Interceptor;
-    use tonic::transport::Channel;
-    use tonic::transport::channel::ClientTlsConfig;
-    use tonic::Request;
-
+    use futures::stream;
+    use once_cell::sync::Lazy;
+    use prost;
+    use prost::Message;
+    use prost_types;
+    use regex::Regex;
     use tokio::runtime::Builder;
     use tokio::sync::mpsc;
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::mpsc::UnboundedSender;
-
     use tokio_stream::wrappers::UnboundedReceiverStream;
-
-    use bazel_event_publisher_proto::google::devtools::build::v1::OrderedBuildEvent;
-    use bazel_event_publisher_proto::google::devtools::build::v1::publish_build_event_client::PublishBuildEventClient;
-    use bazel_event_publisher_proto::google::devtools::build::v1::PublishBuildToolEventStreamRequest;
-    use bazel_event_publisher_proto::google::devtools::build::v1::StreamId;
-
-    use prost;
-    use prost::Message;
-    use prost_types;
-
-    use regex::Regex;
-    use std::sync::Arc;
-    use std::time::Duration;
+    use tonic::Request;
+    use tonic::metadata;
+    use tonic::metadata::MetadataKey;
+    use tonic::metadata::MetadataValue;
+    use tonic::service::Interceptor;
+    use tonic::service::interceptor::InterceptedService;
+    use tonic::transport::Channel;
+    use tonic::transport::channel::ClientTlsConfig;
 
     use crate::BuckEvent;
     use crate::Event;
@@ -120,7 +112,8 @@ mod fbcode {
         s: &str,
         getter: impl Fn(&str) -> Result<String, VarError>,
     ) -> anyhow::Result<String> {
-        static ENV_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new("\\$[a-zA-Z_][a-zA-Z_0-9]*").unwrap());
+        static ENV_REGEX: Lazy<Regex> =
+            Lazy::new(|| Regex::new("\\$[a-zA-Z_][a-zA-Z_0-9]*").unwrap());
 
         let mut out = String::with_capacity(s.len());
         let mut last_idx = 0;
@@ -128,7 +121,8 @@ mod fbcode {
         for mat in ENV_REGEX.find_iter(s) {
             out.push_str(&s[last_idx..mat.start()]);
             let var = &mat.as_str()[1..];
-            let val = getter(var).with_context(|| format!("Error substituting `{}`", mat.as_str()))?;
+            let val =
+                getter(var).with_context(|| format!("Error substituting `{}`", mat.as_str()))?;
             out.push_str(&val);
             last_idx = mat.end();
         }
@@ -159,8 +153,9 @@ mod fbcode {
                     let key = MetadataKey::<metadata::Ascii>::from_bytes(key.as_bytes())
                         .with_context(|| format!("Invalid key in header: `{}: {}`", key, value))?;
 
-                    let value = MetadataValue::try_from(&value)
-                        .with_context(|| format!("Invalid value in header: `{}: {}`", key, value))?;
+                    let value = MetadataValue::try_from(&value).with_context(|| {
+                        format!("Invalid value in header: `{}: {}`", key, value)
+                    })?;
 
                     anyhow::Ok((key, value))
                 })
@@ -187,10 +182,11 @@ mod fbcode {
 
     type GrpcService = InterceptedService<Channel, InjectHeadersInterceptor>;
 
-    async fn connect_build_event_server() -> buck2_error::Result<PublishBuildEventClient<GrpcService>> {
+    async fn connect_build_event_server()
+    -> buck2_error::Result<PublishBuildEventClient<GrpcService>> {
         let uri = std::env::var("BES_URI")
-            .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))
-            ?.parse()?;
+            .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?
+            .parse()?;
         let mut channel = Channel::builder(uri);
         let tls_config = ClientTlsConfig::new();
         {
@@ -198,8 +194,8 @@ mod fbcode {
             match tls_setting.as_str() {
                 "1" | "true" => {
                     channel = channel.tls_config(tls_config)?;
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
         // TODO: parse PEM
@@ -209,21 +205,28 @@ mod fbcode {
             .context("connecting to Bazel event stream gRPC server")
             .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?;
         let mut headers = vec![];
-        for hdr in std::env::var("BES_HEADERS").unwrap_or("".to_owned()).split(",") {
+        for hdr in std::env::var("BES_HEADERS")
+            .unwrap_or("".to_owned())
+            .split(",")
+        {
             let hdr = hdr.trim();
             if !hdr.is_empty() {
-                headers.push(HttpHeader::from_str(hdr)
-                             .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?);
+                headers.push(
+                    HttpHeader::from_str(hdr).map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?,
+                );
             }
-        };
+        }
         let interceptor = InjectHeadersInterceptor::new(&headers)
             .map_err(|e| from_any_with_tag(e, ErrorTag::Tier0))?;
         let client = PublishBuildEventClient::with_interceptor(endpoint, interceptor);
         Ok(client)
     }
 
-    fn buck_to_bazel_events<S: Stream<Item = BuckEvent>>(events: S) -> impl Stream<Item = v1::BuildEvent> {
-        let mut target_actions: HashMap<(String, String), Vec<(BuildEventId, bool)>> = HashMap::new();
+    fn buck_to_bazel_events<S: Stream<Item = BuckEvent>>(
+        events: S,
+    ) -> impl Stream<Item = v1::BuildEvent> {
+        let mut target_actions: HashMap<(String, String), Vec<(BuildEventId, bool)>> =
+            HashMap::new();
         stream! {
             for await event in events {
                 //println!("EVENT {:?} {:?}", event.event.trace_id, event);
@@ -526,7 +529,10 @@ mod fbcode {
         }
     }
 
-    fn stream_build_tool_events<S: Stream<Item = v1::BuildEvent>>(trace_id: String, events: S) -> impl Stream<Item = PublishBuildToolEventStreamRequest> {
+    fn stream_build_tool_events<S: Stream<Item = v1::BuildEvent>>(
+        trace_id: String,
+        events: S,
+    ) -> impl Stream<Item = PublishBuildToolEventStreamRequest> {
         stream::iter(1..)
             .zip(events)
             .map(move |(sequence_number, event)| {
@@ -548,10 +554,15 @@ mod fbcode {
     }
 
     async fn event_sink_loop(recv: UnboundedReceiver<Vec<BuckEvent>>) -> anyhow::Result<()> {
-        let mut handlers: HashMap<String, (UnboundedSender<BuckEvent>, tokio::task::JoinHandle<anyhow::Result<()>>)> = HashMap::new();
+        let mut handlers: HashMap<
+            String,
+            (
+                UnboundedSender<BuckEvent>,
+                tokio::task::JoinHandle<anyhow::Result<()>>,
+            ),
+        > = HashMap::new();
         let client = connect_build_event_server().await?;
-        let mut recv = UnboundedReceiverStream::new(recv)
-            .flat_map(|v|stream::iter(v));
+        let mut recv = UnboundedReceiverStream::new(recv).flat_map(|v| stream::iter(v));
         let result_uri = std::env::var("BES_RESULT").ok();
         while let Some(event) = recv.next().await {
             //let dbg_trace_id = event.event.trace_id.clone();
@@ -568,7 +579,10 @@ mod fbcode {
                 let trace_id = event.event.trace_id.clone();
                 let handler = tokio::spawn(async move {
                     let recv = UnboundedReceiverStream::new(recv);
-                    let request = Request::new(stream_build_tool_events(trace_id.clone(), buck_to_bazel_events(recv)));
+                    let request = Request::new(stream_build_tool_events(
+                        trace_id.clone(),
+                        buck_to_bazel_events(recv),
+                    ));
                     if let Some(result_uri) = result_uri.as_ref() {
                         println!("BES results: {}{}", &result_uri, &trace_id);
                     }
@@ -591,9 +605,13 @@ mod fbcode {
         //println!("event_sink_loop recv CLOSED");
         // TODO: handle closure and retry.
         // close send handles and await all handlers.
-        let handlers: Vec<tokio::task::JoinHandle<anyhow::Result<()>>> = handlers.into_values().map(|(_, handler)|handler).collect();
+        let handlers: Vec<tokio::task::JoinHandle<anyhow::Result<()>>> =
+            handlers.into_values().map(|(_, handler)| handler).collect();
         // TODO: handle retry.
-        try_join_all(handlers).await?.into_iter().collect::<anyhow::Result<Vec<()>>>()?;
+        try_join_all(handlers)
+            .await?
+            .into_iter()
+            .collect::<anyhow::Result<Vec<()>>>()?;
         Ok(())
     }
 
@@ -640,8 +658,8 @@ mod fbcode {
                 Event::Buck(event) => {
                     self.offer(event);
                 }
-                Event::CommandResult(..) => {},
-                Event::PartialResult(..) => {},
+                Event::CommandResult(..) => {}
+                Event::PartialResult(..) => {}
             }
         }
     }
@@ -693,11 +711,7 @@ fn new_remote_event_sink_if_fbcode(
     {
         let _ = (fb, config);
         match std::env::var("BES_URI") {
-            Ok(_) => Ok(
-                Some(
-                    RemoteEventSink::new()?
-                )
-            ),
+            Ok(_) => Ok(Some(RemoteEventSink::new()?)),
             _ => Ok(None),
         }
     }
