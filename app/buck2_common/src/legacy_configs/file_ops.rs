@@ -230,7 +230,7 @@ impl ConfigParserFileOps for DiceConfigFileOps<'_, '_> {
             Some(_) | None => return Ok(Vec::new()),
         }
 
-        let out = DiceFileComputations::read_dir_include_ignores(self.ctx, path.as_ref())
+        let mut out: Vec<ConfigDirEntry> = DiceFileComputations::read_dir_include_ignores(self.ctx, path.as_ref())
             .await?
             .included
             .iter()
@@ -246,6 +246,7 @@ impl ConfigParserFileOps for DiceConfigFileOps<'_, '_> {
                 FileType::Symlink | FileType::Unknown => None,
             })
             .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(out)
     }
 }
@@ -404,6 +405,39 @@ mod tests {
             },
         ))?;
         assert_eq!(v, vec![ConfigPath::Global(file.to_owned())]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn dir_with_multiple_files_lexicographical_order() -> buck2_error::Result<()> {
+        let mut v = vec![];
+        let dir = tempfile::tempdir()?;
+        let root = AbsPath::new(dir.path())?;
+        
+        // Create files in non-lexicographical order
+        let file_c = root.join("c_config");
+        let file_a = root.join("a_config");
+        let file_b = root.join("b_config");
+        fs_util::write(&file_c, "")?;
+        fs_util::write(&file_a, "")?;
+        fs_util::write(&file_b, "")?;
+
+        let dir = AbsPath::new(dir.path())?;
+
+        futures::executor::block_on(push_all_files_from_a_directory(
+            &mut v,
+            &ConfigPath::Global(dir.to_owned()),
+            &mut DefaultConfigParserFileOps {
+                project_fs: create_project_filesystem(),
+            },
+        ))?;
+        
+        // Verify files are returned in lexicographical order
+        assert_eq!(v.len(), 3);
+        assert_eq!(v[0], ConfigPath::Global(AbsPath::new(&file_a)?.to_owned()));
+        assert_eq!(v[1], ConfigPath::Global(AbsPath::new(&file_b)?.to_owned()));
+        assert_eq!(v[2], ConfigPath::Global(AbsPath::new(&file_c)?.to_owned()));
 
         Ok(())
     }
